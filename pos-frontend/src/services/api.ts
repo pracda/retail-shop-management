@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api/v1'
+
 const api = axios.create({
-  baseURL: 'http://localhost:8080/api/v1',
+  baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -67,7 +69,7 @@ api.interceptors.response.use(
 
     try {
       const { data } = await axios.post(
-        'http://localhost:8080/api/v1/auth/refresh',
+        `${BASE_URL}/auth/refresh`,
         { refreshToken },
       )
       const newAccessToken: string = data.data.accessToken
