@@ -1,0 +1,50 @@
+# Maven
+pos-backend/target/
+pos-backend/*.jar
+pos-backend/.mvn/
+
+ecommerce-backend/target/
+ecommerce-backend/*.jar
+ecommerce-backend/.mvn/
+
+# Node
+node_modules/
+**/node_modules/
+
+pos-frontend/dist/
+pos-frontend/.vite/
+
+ecommerce-frontend/.next/
+ecommerce-frontend/out/
+ecommerce-frontend/dist/
+
+# Build artifacts
+dist/
+build/
+.next/
+coverage/
+
+# Typescript
+*.tsbuildinfo
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+
+# Environment
+.env
+.env.*
+*-prod.yml
+*-staging.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+
+# Logs
+*.log
