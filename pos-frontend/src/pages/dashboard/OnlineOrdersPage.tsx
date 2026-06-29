@@ -12,7 +12,8 @@ import { downloadCsv, openPrintWindow, buildHtmlTable } from '../../utils/report
 // ── Types / helpers ────────────────────────────────────────────────────────────
 
 type FilterStatus = OnlineOrderStatus | 'ALL'
-type Preset = 'today' | '7days' | '30days' | 'thisMonth' | 'custom'
+type RangePreset = 'today' | '7days' | '30days' | 'thisMonth' | 'custom'
+type Preset = RangePreset
 
 function fmt(n: number, d = 2) {
   return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
@@ -22,8 +23,6 @@ function fmtC(n: number) { return `Rs. ${fmt(n)}` }
 function toLocalDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-
-type RangePreset = 'today' | '7days' | '30days' | 'thisMonth' | 'custom'
 
 function presetToRange(preset: Preset, customFrom: string, customTo: string): { from: string; to: string } | { range: RangePreset } {
   if (preset === 'custom') {
