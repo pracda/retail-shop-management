@@ -23,13 +23,15 @@ function toLocalDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function presetToRange(preset: Preset, customFrom: string, customTo: string): { from: string; to: string } | { range: string } {
+type RangePreset = 'today' | '7days' | '30days' | 'thisMonth' | 'custom'
+
+function presetToRange(preset: Preset, customFrom: string, customTo: string): { from: string; to: string } | { range: RangePreset } {
   if (preset === 'custom') {
     const fromD = new Date(customFrom + 'T00:00:00.000Z')
     const toD   = new Date(customTo   + 'T23:59:59.999Z')
     return { from: fromD.toISOString(), to: toD.toISOString() }
   }
-  return { range: preset }
+  return { range: preset as RangePreset }
 }
 
 const STATUS_STYLES: Record<OnlineOrderStatus, string> = {
