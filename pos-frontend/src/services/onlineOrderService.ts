@@ -56,7 +56,7 @@ export interface OnlineOrderDailyRow {
   revenue: number
 }
 
-type RangePreset = 'today' | '7days' | '30days' | 'thisMonth'
+type RangePreset = 'today' | '7days' | '30days' | 'thisMonth' | 'custom'
 
 interface ListParams {
   storeId: number
