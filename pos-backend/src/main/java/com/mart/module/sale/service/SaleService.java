@@ -37,6 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -63,6 +64,10 @@ public class SaleService {
 
     private static final DateTimeFormatter RECEIPT_FMT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.systemDefault());
+
+    private static final SecureRandom RECEIPT_RANDOM = new SecureRandom();
+    /** Unambiguous characters only — no 0/O, 1/I/L — so receipts stay readable over the phone. */
+    private static final char[] RECEIPT_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ".toCharArray();
 
     // ── Queries ──────────────────────────────────────────────────────────────
 
@@ -225,8 +230,7 @@ public class SaleService {
         }
         int pointsEarned = weightedTotal.divide(BigDecimal.valueOf(100), 0, RoundingMode.FLOOR).intValue();
 
-        String receiptNumber = "RCP-" + RECEIPT_FMT.format(Instant.now())
-                + "-" + store.getId();
+        String receiptNumber = generateReceiptNumber(store.getId());
 
         Sale sale = Sale.builder()
                 .store(store)
@@ -284,6 +288,28 @@ public class SaleService {
 
         log.info("Sale {} created in store {} shift {}", receiptNumber, store.getId(), shift.getId());
         return SaleResponse.from(sale);
+    }
+
+    /**
+     * Receipt numbers must be unique (sales.uk_sales_receipt_number). A plain
+     * second-resolution timestamp collides when two sales complete in the same
+     * second at the same store, so a random 4-char suffix is appended and the
+     * candidate is checked against the DB. The unique constraint remains the
+     * final guard against a concurrent insert of the same candidate.
+     */
+    String generateReceiptNumber(Long storeId) {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            StringBuilder suffix = new StringBuilder(4);
+            for (int i = 0; i < 4; i++) {
+                suffix.append(RECEIPT_ALPHABET[RECEIPT_RANDOM.nextInt(RECEIPT_ALPHABET.length)]);
+            }
+            String candidate = "RCP-" + RECEIPT_FMT.format(Instant.now())
+                    + "-" + storeId + "-" + suffix;
+            if (!saleRepository.existsByReceiptNumber(candidate)) {
+                return candidate;
+            }
+        }
+        throw AppException.conflict("Could not generate a unique receipt number — please retry the sale");
     }
 
     // ── Void sale ─────────────────────────────────────────────────────────────

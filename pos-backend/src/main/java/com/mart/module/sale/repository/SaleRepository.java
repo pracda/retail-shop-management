@@ -13,6 +13,8 @@ import java.time.Instant;
 
 public interface SaleRepository extends JpaRepository<Sale, Long> {
 
+    boolean existsByReceiptNumber(String receiptNumber);
+
     /**
      * Sum of CASH payments on COMPLETED sales for a given shift.
      * Used for cash reconciliation.
