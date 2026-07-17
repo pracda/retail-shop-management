@@ -1,223 +1,189 @@
 # AI Assistant Feature Plan — Store Chatbot (Admin + Cashier)
 
 **Status:** Proposed (not yet implemented)
-**Date:** 2026-07-15
+**Updated:** 2026-07-17 — reworked to route all LLM traffic through the owner's
+[llm-api-gateway](https://github.com/pracda) instead of calling the Claude API directly.
 
 ## What we're building
 
-Two role-scoped AI chat assistants powered by the Claude API, served by the existing
-Spring Boot backend:
+Two role-scoped AI chat assistants served by the existing Spring Boot backend, with all
+LLM calls routed through the **LLM API Gateway** (separate project — Spring Boot gateway
+with API-key auth, Redis rate limiting, prompt-injection input scanning, output scanning,
+and async audit logging):
 
 1. **Admin/Manager assistant** (back-office pages) — answers questions about the store
-   ("how did sales do this week vs last?", "which products are running low?", "who was my
-   best cashier in June?"). For analytical questions it can return a **small dashboard**
-   (stat tiles + a chart + a table) rendered inline in the chat; for simple questions it
-   answers in plain text.
-2. **Cashier assistant** (POS screen) — a deliberately limited quick-lookup bot:
-   "how many Coke 12 oz have we got left?", "how many of item 5566 remaining?",
-   "what's the total sales for the day?". Short factual answers only. No reports, no
-   management data, no other stores.
+   ("how did sales do this week vs last?", "which products are running low?"). For
+   analytical questions it returns a **small dashboard** (stat tiles + chart + table)
+   rendered inline in the chat; simple questions get plain text.
+2. **Cashier assistant** (POS screen) — deliberately limited quick lookups:
+   "how many Coke 12 oz left?", "how many of item 5566 remaining?", "total sales today?".
+   One-line factual answers. No management data, no other stores.
 
-Both use the same mechanism: **Claude tool use (function calling)**. The model never
-touches the database — it calls a fixed allowlist of tools, and each tool is a thin,
-store-scoped wrapper around existing service/repository methods. The backend runs the
-tool loop and returns the final answer.
+Both use **Claude tool use (function calling)**: the model calls a fixed allowlist of
+tools; each tool is a thin, store-scoped wrapper around existing services. The POS
+backend runs the tool loop — the gateway sits between it and the Claude API.
 
 ---
 
 ## Architecture
 
 ```
-pos-frontend (chat UI)                      pos-backend
-┌───────────────────────┐   POST /api/v1/assistant/chat   ┌──────────────────────────────┐
-│ AdminChatPanel        │ ──────────────────────────────► │ module/assistant             │
-│ PosChatWidget         │   { messages: [...] }           │  AssistantController         │
-│ (renders text +       │ ◄────────────────────────────── │  AssistantService (tool loop)│
-│  dashboard blocks)    │   ApiResponse<ChatResponse>     │  AssistantTools (allowlist)  │
-└───────────────────────┘                                 │        │ calls existing       │
-                                                          │        ▼ services             │
-                                                          │  ReportService, Inventory-   │
-                                                          │  Service, SaleService, ...   │
-                                                          └───────────┬──────────────────┘
-                                                                      │ Anthropic Java SDK
-                                                                      ▼
-                                                              Claude API (api.anthropic.com)
+pos-frontend                pos-backend                     llm-api-gateway              Claude API
+┌───────────────┐  /api/v1/assistant/chat  ┌─────────────┐  POST /api/v1/chat  ┌──────────────────┐
+│ AdminChatPanel│ ───────────────────────► │ assistant   │ ──────────────────► │ auth (org key)   │
+│ PosChatWidget │ ◄─────────────────────── │ module      │ ◄────────────────── │ rate limit (Redis)│ ──► api.anthropic.com
+│               │   ApiResponse<ChatResp>  │ (tool loop) │   content/toolCalls │ input/output scan│
+└───────────────┘                          └──────┬──────┘                     │ audit + tokens   │
+                                                  │ tools call existing        └──────────────────┘
+                                                  ▼ services (store-scoped)
+                                           ReportService, InventoryService, ...
 ```
 
-### New backend module: `com.mart.module.assistant`
+**Why the gateway in the middle:**
+- The Anthropic API key lives **only** in the gateway — the POS backend holds a gateway
+  org API key instead.
+- Per-org rate limiting, prompt-injection scanning, unsafe-output scanning, and an audit
+  trail with token counts come for free (already built there).
+- Provider becomes swappable per request (`ANTHROPIC` / `OPENAI`) without touching the
+  POS backend.
 
-- `AssistantController` — `POST /assistant/chat` with `@PreAuthorize` per role.
-  Two endpoints (or one endpoint that branches on the caller's role):
-  - `/assistant/chat` — ADMIN / MANAGER / MASTER_ADMIN
-  - `/assistant/pos-chat` — CASHIER (and above)
-- `AssistantService` — builds the request (system prompt + role's toolset + conversation
-  history from the client), runs the tool-use loop with the **Anthropic Java SDK**
-  (`com.anthropic:anthropic-java`, `BetaToolRunner` or a manual loop), caps iterations
-  (e.g. 5) and `max_tokens`.
-- `AssistantTools` — the tool implementations. **Every tool takes `storeId` and the
-  caller's role from `UserPrincipal`, never from model-provided arguments.** Tools call
-  existing services only; no SQL, no repositories invoked with model-controlled filters
-  beyond validated enums/dates/ids.
-- Conversation state: stateless backend — the frontend sends the running message history
-  each turn (same pattern as the API itself). No new tables needed for v1.
+## Gateway gap analysis (as of today)
 
-### Response contract (fits the existing `ApiResponse<T>` standard)
+The gateway's `/api/v1/chat` contract is **text-only**:
 
-```json
-{
-  "success": true,
-  "data": {
-    "reply": "Sales this week are Rs. 42,300, up 12% over last week...",
-    "dashboard": {
-      "title": "This week vs last week",
-      "tiles": [{ "label": "Revenue", "value": "Rs. 42,300", "delta": "+12%" }],
-      "chart": { "type": "bar", "labels": ["Mon", "..."], "series": [{ "name": "This week", "data": [5400, ...] }] },
-      "table": { "columns": ["Product", "Qty", "Revenue"], "rows": [["Coke 12oz", 84, "Rs. 6,720"]] }
-    },
-    "usage": { "inputTokens": 3100, "outputTokens": 420 }
-  }
-}
-```
-
-`dashboard` is null for plain answers. The model produces it by calling a
-`render_dashboard` tool whose input schema *is* the dashboard spec — the backend
-validates it and passes it through. This keeps chart generation fully structured
-(no HTML/markdown parsing on the frontend).
-
----
-
-## Toolsets
-
-### Admin/Manager toolset
-
-| Tool | Backed by | Notes |
-|---|---|---|
-| `get_sales_summary(period, groupBy?)` | ReportService | day/week/month/custom range; totals, tx count, avg basket |
-| `get_top_products(period, limit)` | ReportService | by revenue or quantity |
-| `get_inventory_status(lowStockOnly?)` | InventoryService | stock levels, low-stock list with thresholds |
-| `get_product_stock(query)` | ProductService/InventoryService | by name, id, or barcode |
-| `get_refund_summary(period)` | RefundService | count, value, top reasons |
-| `get_expense_summary(period)` | ExpenseService | |
-| `get_cashier_performance(period)` | ReportService/ShiftService | sales per cashier, shift stats |
-| `get_customer_stats(period)` | CustomerService | new customers, loyalty redemptions (aggregates only — no PII lists) |
-| `render_dashboard(spec)` | — | terminal tool; validated spec passed to the frontend |
-
-MANAGER gets the same set minus anything ADMIN-only (e.g. expense summary can be
-role-filtered later). System prompt instructs: *use `render_dashboard` when the user asks
-for a report/comparison/breakdown; otherwise answer in one or two sentences.*
-
-### Cashier toolset (deliberately tiny)
-
-| Tool | Notes |
+| Current gateway behavior | Impact on this feature |
 |---|---|
-| `get_product_stock(query)` | name / item id / barcode → on-hand quantity + price |
-| `get_todays_sales_total()` | current business day, caller's store |
-| `get_price(query)` | quick price check |
+| `ChatRequest` = `provider, model, systemPrompt (≤2000 chars), userMessage (≤8000), history[{role, content}]` | No way to send tool definitions or tool results |
+| `AnthropicProvider` hardcodes `max_tokens: 1000` and forwards only string messages | Tool loop impossible; longer answers truncated |
+| Response maps `content[0].text` only; `tool_use` blocks are silently dropped | Tool calls would be lost |
+| No `stopReason` in `ChatResponse` | Caller can't tell "final answer" from "wants a tool" |
 
-System prompt: answer in one short sentence, numbers first; refuse anything outside
-stock/price/today's sales ("Ask a manager on the back-office side for that."). No
-dashboard tool, no customer data, no other stores, no date ranges beyond today.
+## Gateway work items (v1 — tool-use passthrough)
 
-### Security rules (non-negotiable, consistent with the repo's standards)
+Changes in the **llm-api-gateway** repo, all additive/backward-compatible:
 
-- Endpoints behind JWT + `@PreAuthorize`, like every other controller.
-- Store scoping injected server-side from `UserPrincipal` — a prompt-injected
-  "show me store 1" cannot cross stores because no tool accepts a storeId argument.
-- Tool inputs validated (enums, date ranges capped at e.g. 1 year, limits capped at 50).
-- Iteration cap + `max_tokens` cap + per-user rate limit (e.g. 20 requests/min) to bound
-  cost; return a friendly error when exceeded.
-- Assistant queries logged to the existing audit log (who asked what, which tools ran).
-- `ANTHROPIC_API_KEY` comes from the environment (EC2 `/opt/pos/.env` + compose), never
-  committed. If unset, the endpoints return 503 "assistant not configured" and the
-  frontend hides the chat buttons (feature flag via a `/assistant/status` ping).
+1. **`ChatRequest`** — add optional fields:
+   - `tools`: raw Anthropic tool definitions (list of JSON objects, passed through)
+   - `toolChoice`: optional (`auto` default)
+   - `maxTokens`: integer, server-side capped (e.g. ≤ 4096; default stays 1000)
+   - `HistoryEntry` gains optional `contentBlocks` (raw JSON blocks) so assistant
+     `tool_use` turns and user `tool_result` turns can round-trip; plain `content`
+     string keeps working for normal turns
+2. **`AnthropicProvider`** — forward `tools`/`tool_choice`/`max_tokens`; map responses to
+   include every content block: text (joined) **and** tool calls
+3. **`ChatResponse`** — add `stopReason` (`end_turn` | `tool_use` | `max_tokens`) and
+   `toolCalls: [{id, name, input}]`
+4. **Scanning** — input scan unchanged (user message); output scan applies to text
+   content; tool *inputs* generated by the model are structured JSON validated by the
+   POS backend against tool schemas, so gateway-side scanning of tool calls is optional
+5. **Limits** — raise `systemPrompt` cap to ~4000 chars (tool-heavy prompts) or keep
+   prompts compact; keep the 2000 default for other orgs if preferred
+6. **Streaming with tools** — deferred; the assistant uses non-streaming calls first
+
+Estimated gateway effort: ~2 DTO changes, ~40 lines in `AnthropicProvider`, tests.
+
+### v0 fallback (zero gateway changes) — optional stepping stone
+
+If you want something demoable before touching the gateway:
+- **Admin:** the POS backend precomputes a compact JSON snapshot (today's totals, low
+  stock list, top products) into `systemPrompt`, and Claude answers from that context.
+  No tools, no dashboards — text answers only.
+- **Cashier:** backend does its own keyword/barcode retrieval against the product table,
+  injects the matches + today's total into the prompt.
+
+Workable today, but brittle for anything beyond canned questions — going straight to v1
+is recommended since both repos are yours.
 
 ---
 
-## Model choice & cost (current pricing, per million tokens)
+## POS backend integration
 
-| Model | Input | Output | Fit |
-|---|---|---|---|
-| `claude-opus-4-8` | $5 | $25 | Default recommendation for the **admin assistant** — best quality for multi-step report reasoning and dashboard building |
-| `claude-sonnet-5` | $3 ($2 intro to 2026-08-31) | $15 ($10 intro) | Middle option if admin costs need trimming |
-| `claude-haiku-4-5` | $1 | $5 | **Cashier assistant** — single-tool lookups don't need frontier reasoning, and speed matters at the counter |
+New module `com.mart.module.assistant` (unchanged from the original plan except the
+LLM client):
 
-Rough per-query economics (typical query ≈ 2–4K input tokens including tool definitions
-and one or two tool results, ≈ 300–800 output tokens):
+- `AssistantController` — `POST /assistant/chat` (ADMIN/MANAGER/MASTER_ADMIN) and
+  `POST /assistant/pos-chat` (CASHIER+), both behind JWT + `@PreAuthorize`
+- `AssistantService` — runs the tool loop: call gateway → if `stopReason == "tool_use"`,
+  execute the requested tools server-side, append `tool_result` blocks to history, call
+  gateway again (max 5 iterations, `maxTokens` capped)
+- `GatewayClient` — thin HTTP client for `POST {LLM_GATEWAY_URL}/api/v1/chat` with
+  `Authorization: Bearer {LLM_GATEWAY_API_KEY}`; no Anthropic SDK dependency at all
+- **Tools never trust model args for scoping** — `storeId` and role are injected from
+  `UserPrincipal`; tool inputs validated (enums, capped ranges/limits)
+- Config in `application.yml`:
 
-- **Admin query on Opus 4.8:** ~$0.02–0.06 → even 100 admin queries/day ≈ **$2–6/day worst case**, realistically far less for a demo.
-- **Cashier query on Haiku 4.5:** well under **$0.01**.
-- **Prompt caching** (system prompt + tool definitions marked `cache_control: ephemeral`)
-  cuts repeat input cost ~90%. Note Haiku 4.5's minimum cacheable prefix is 4096 tokens,
-  so the cashier bot's small prompt may not cache — that's fine at Haiku prices.
-
-The model IDs and per-role model selection live in `application.yml`
-(`assistant.admin-model`, `assistant.cashier-model`) so they're swappable without code
-changes. My recommendation: **Opus 4.8 for admin, Haiku 4.5 for cashier** — but this is
-a cost/quality dial you own; dropping admin to Sonnet 5 is a config change.
-
-Java SDK dependency:
-
-```xml
-<dependency>
-    <groupId>com.anthropic</groupId>
-    <artifactId>anthropic-java</artifactId>
-    <version>2.34.0</version>
-</dependency>
+```yaml
+assistant:
+  gateway-url: ${LLM_GATEWAY_URL:}          # absent → assistant disabled (503 + hidden UI)
+  gateway-api-key: ${LLM_GATEWAY_API_KEY:}
+  admin-model: claude-opus-4-8              # forwarded to the gateway per request
+  cashier-model: claude-haiku-4-5
+  max-iterations: 5
+  daily-query-cap-per-user: 50
 ```
 
----
+## Toolsets (unchanged from original plan)
 
-## Frontend
+**Admin/Manager:** `get_sales_summary`, `get_top_products`, `get_inventory_status`,
+`get_product_stock`, `get_refund_summary`, `get_expense_summary`,
+`get_cashier_performance`, `get_customer_stats`, `render_dashboard(spec)` — the last one
+is a terminal tool whose validated input *is* the dashboard JSON the frontend renders
+(tiles + chart + table).
 
-### Admin chat (pos-frontend, dashboard pages)
+**Cashier:** `get_product_stock(query)`, `get_todays_sales_total()`, `get_price(query)`
+only. System prompt enforces one-line answers and refuses anything else.
 
-- Floating chat button (bottom-right) on back-office pages → slide-in panel.
-- Renders `reply` as text; when `dashboard` is present, renders it above/with the reply:
-  - **Tiles** — existing Tailwind card style.
-  - **Chart** — one small bar/line component (either add `recharts`, or hand-rolled
-    Tailwind bars for v1 to avoid a new dependency).
-  - **Table** — existing table styling.
-- Keeps history in a Zustand store for the session; "clear chat" resets.
+## Frontend (unchanged from original plan)
 
-### Cashier chat (POS screen)
+- **Admin:** floating chat button on back-office pages → slide-in panel; renders text +
+  dashboard blocks (tiles/table with existing Tailwind styles; chart via `recharts` or
+  Tailwind bars)
+- **Cashier:** compact modal from the POS action bar, barcode-scanner friendly input,
+  large text answers; online-only (add `/api/v1/assistant` to the PWA `NetworkOnly`
+  routes)
 
-- A "Ask" quick-action button alongside Price Check — opens a compact modal with a large
-  input (barcode-scanner friendly: scanning into the chat box should work since scanners
-  type + Enter) and big touch targets.
-- Answers render as one large-text line, optimized for glanceability.
-- **Online-required**: the assistant is exempt from offline-capability (like email
-  receipts already are); the button greys out when offline. Add `/api/v1/assistant` to
-  the PWA `NetworkOnly` route list in `vite.config.ts`.
+## Models & cost
 
----
+| Role | Model (via gateway) | Rough cost/query |
+|---|---|---|
+| Admin | `claude-opus-4-8` ($5/$25 per MTok) | ~$0.02–0.06 |
+| Cashier | `claude-haiku-4-5` ($1/$5 per MTok) | < $0.01 |
+
+The gateway's audit log records prompt/completion tokens per request, giving per-org
+cost visibility without extra work in the POS backend. Its Redis rate limiter provides
+the per-principal request cap; the POS backend adds a per-user daily cap as a second
+layer for demo accounts.
+
+## Deployment
+
+The gateway is **not currently deployed**. Options, in order of preference:
+
+1. **Same EC2 box, same compose file** — add `gateway` + `redis` services to
+   `docker-compose.prod.yml`, reachable from the POS backend over the internal Docker
+   network (`http://gateway:8080`). Nothing new exposed publicly — CloudFront still only
+   routes `/api/*` to the POS backend. **Memory check:** t3.small (2 GB) already runs
+   MySQL + the POS API; adding a second JVM + Redis likely needs a bump to
+   **t3.medium (4 GB, ≈ +$15/mo)** — stop/start scripts and the URL are unaffected.
+2. Separate small instance for the gateway (cleaner isolation, +$8–15/mo).
+
+Gateway env on the box: its DB (can share the MySQL container with a separate schema),
+`REDIS_URL`, the real `ANTHROPIC_API_KEY`, and an org API key issued for the POS backend.
 
 ## Build phases
 
-1. **Backend core** — assistant module, Java SDK wiring, admin toolset (sales summary,
-   inventory, top products, product stock), tool loop, security caps. Verify via curl.
-2. **Admin chat UI** — chat panel + text answers, then `render_dashboard` + tile/chart/
-   table rendering.
-3. **Cashier bot** — limited toolset endpoint + POS modal widget on Haiku 4.5.
-4. **Hardening/polish** — rate limiting, audit logging, prompt caching markers,
-   usage logging (token counts per query for cost visibility), optional SSE streaming
-   for the admin panel.
-
-Estimated new code: ~1 controller, 1 service, ~10 tool methods (mostly delegating to
-existing services), 2 frontend components. No schema changes for v1.
-
-## Deployment notes
-
-- Add `ANTHROPIC_API_KEY` (and optionally `ASSISTANT_ENABLED=true`) to `/opt/pos/.env`
-  on the EC2 box; pass through in `docker-compose.prod.yml`.
-- Outbound HTTPS to `api.anthropic.com` from EC2 — allowed (no egress restrictions).
-- No CloudFront changes needed: `/api/v1/assistant/*` already routes through the
-  existing `/api/*` behavior. If SSE streaming is added later, that behavior already has
-  `OriginReadTimeout: 60`; long streams may need it raised.
+1. **Gateway v1** — tool passthrough (`tools`, `toolCalls`, `stopReason`, `maxTokens`,
+   structured history) + tests
+2. **POS backend core** — assistant module, `GatewayClient`, admin toolset + tool loop;
+   verify via curl through the full chain (POS → gateway → Claude)
+3. **Admin chat UI** — panel + text answers, then `render_dashboard` rendering
+4. **Cashier bot** — limited toolset on Haiku via gateway + POS modal
+5. **Deploy** — gateway + Redis into the EC2 compose stack (instance resize), env wiring
+6. **Hardening** — per-user daily caps, audit entries in the POS audit log, prompt
+   caching headers (pass-through), optional SSE streaming later
 
 ## Open decisions (owner: you)
 
-1. Admin model: Opus 4.8 (recommended) vs Sonnet 5 (cheaper).
-2. Chart rendering: add `recharts` (~nicer) vs Tailwind-only bars (zero new deps).
-3. Should MANAGER get the full admin toolset or a reduced one in v1?
-4. Demo users: should `demo.admin` have the assistant enabled (each customer demo query
-   costs real money — a per-user daily cap, e.g. 30 queries, is cheap insurance)?
+1. Gateway v1 passthrough vs. quick v0 context-injection demo first?
+2. Same-box deployment with instance resize to t3.medium, or separate gateway instance?
+3. Admin model: Opus 4.8 (recommended) vs Sonnet 5 (cheaper) — config-only change.
+4. Should the public `demo.admin` account get the assistant? (daily cap recommended)
