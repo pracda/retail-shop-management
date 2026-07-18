@@ -18,6 +18,7 @@ import { createRefund } from '../../services/refundService'
 import { verifyManagerPin } from '../../services/authService'
 import { useOfflineQueueStore } from '../../store/offlineQueueStore'
 import { useOnlineStatus } from '../../hooks/useOnlineStatus'
+import PosAssistantModal from '../../components/assistant/PosAssistantModal'
 import { useOnlineOrderNotifications } from '../../hooks/useOnlineOrderNotifications'
 import OnlineOrdersPanel from './OnlineOrdersPanel'
 import api from '../../services/api'
@@ -2220,6 +2221,7 @@ export default function PosScreen() {
   const [showCustomerModal, setShowCustomerModal] = useState(false)
   const [showExpenseModal, setShowExpenseModal] = useState(false)
   const [showOnlineOrders, setShowOnlineOrders] = useState(false)
+  const [showAssistant, setShowAssistant] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [holdFeedback, setHoldFeedback] = useState<string | null>(null)
   // Variant picker: shown when a product with variants is tapped
@@ -2839,6 +2841,19 @@ export default function PosScreen() {
           Price Check
         </button>
 
+        {/* Ask AI — quick stock/price/sales lookups */}
+        <button
+          onClick={() => setShowAssistant(true)}
+          className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border
+                     bg-surface-800 border-surface-600 text-white hover:bg-surface-700 transition-colors"
+        >
+          <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z" />
+          </svg>
+          Ask AI
+        </button>
+
         {/* Refund */}
         <button
           onClick={() => shiftOpen && setShowRefundModal(true)}
@@ -3040,6 +3055,10 @@ export default function PosScreen() {
 
       {showPriceCheckModal && (
         <PriceCheckModal storeId={storeId} onClose={() => setShowPriceCheckModal(false)} />
+      )}
+
+      {showAssistant && (
+        <PosAssistantModal onClose={() => setShowAssistant(false)} />
       )}
 
       {showCustomItemModal && (

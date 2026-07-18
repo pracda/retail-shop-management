@@ -24,7 +24,7 @@ export default defineConfig({
         runtimeCaching: [
           {
             // Auth + all write/mutation endpoints → always go to network
-            urlPattern: /\/api\/v1\/(auth|sales|refunds|inventory|shifts|users|reports|ecommerce\/auth|ecommerce\/cart|ecommerce\/orders)/,
+            urlPattern: /\/api\/v1\/(auth|sales|refunds|inventory|shifts|users|reports|assistant|ecommerce\/auth|ecommerce\/cart|ecommerce\/orders)/,
             handler: 'NetworkOnly',
           },
           {

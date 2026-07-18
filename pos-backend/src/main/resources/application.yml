@@ -46,3 +46,21 @@ management:
     health:
       show-details: when-authorized
 
+# ── AI Assistant ──────────────────────────────────────────────────────────────
+# All LLM calls are routed through the external Secure LLM API Gateway.
+# Leave LLM_GATEWAY_URL unset to disable the feature (endpoints return 503).
+# Auth (first configured wins): LLM_GATEWAY_API_KEY (sent as X-API-Key, preferred),
+# or LLM_GATEWAY_TOKEN (a pre-minted JWT bearer), or LLM_GATEWAY_USERNAME +
+# LLM_GATEWAY_PASSWORD to log in for a JWT automatically.
+assistant:
+  gateway-url: ${LLM_GATEWAY_URL:}
+  gateway-api-key: ${LLM_GATEWAY_API_KEY:}
+  gateway-token: ${LLM_GATEWAY_TOKEN:}
+  gateway-username: ${LLM_GATEWAY_USERNAME:}
+  gateway-password: ${LLM_GATEWAY_PASSWORD:}
+  provider: ${LLM_PROVIDER:ANTHROPIC}
+  admin-model: ${ASSISTANT_ADMIN_MODEL:claude-haiku-4-5-20251001}
+  cashier-model: ${ASSISTANT_CASHIER_MODEL:claude-haiku-4-5-20251001}
+  daily-query-cap-per-user: ${ASSISTANT_DAILY_CAP:50}
+  request-timeout-seconds: ${ASSISTANT_TIMEOUT_SECONDS:45}
+

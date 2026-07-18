@@ -8,6 +8,7 @@ import { useOnlineOrderNotifications } from '../hooks/useOnlineOrderNotification
 import { logout } from '../services/authService'
 import { changePassword } from '../services/userService'
 import { getStores } from '../services/storeService'
+import AssistantPanel from '../components/assistant/AssistantPanel'
 
 interface NavItem {
   label: string
@@ -531,6 +532,9 @@ export default function AdminLayout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Store AI assistant — available on every back-office page */}
+      <AssistantPanel />
 
       {/* Change password modal */}
       {showChangePw && user && (
