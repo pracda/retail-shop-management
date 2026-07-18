@@ -49,8 +49,25 @@ public class GatewayClient {
     }
 
     /**
-     * Send a chat request through the gateway. With an API key the auth header is static; with
-     * a login JWT, a 401 triggers one transparent re-authentication and retry.
+     * Send a chat request using an explicit API key (a store's own key, or the resolved
+     * default). Falls back to the global auth chain when {@code apiKeyOverride} is blank.
+     */
+    public GatewayChatResponse chat(GatewayChatRequest request, String apiKeyOverride) {
+        if (apiKeyOverride != null && !apiKeyOverride.isBlank()) {
+            try {
+                return doChat(request, API_KEY_HEADER, apiKeyOverride.trim());
+            } catch (UnauthorizedException e) {
+                throw new AppException(HttpStatus.BAD_GATEWAY, "GATEWAY_AUTH_FAILED",
+                        "The AI gateway rejected this store's API key. Check the key in Settings.");
+            }
+        }
+        return chat(request);
+    }
+
+    /**
+     * Send a chat request through the gateway using globally-configured credentials. With an
+     * API key the auth header is static; with a login JWT, a 401 triggers one transparent
+     * re-authentication and retry.
      */
     public GatewayChatResponse chat(GatewayChatRequest request) {
         if (usingApiKey()) {

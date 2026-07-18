@@ -38,4 +38,12 @@ public class Store extends Auditable {
     @Column(name = "tax_rate", nullable = false, precision = 6, scale = 4)
     @Builder.Default
     private BigDecimal taxRate = BigDecimal.ZERO;
+
+    /**
+     * This store's own Secure LLM API Gateway key for the AI assistant. When blank, the
+     * assistant falls back to the server-wide default key. Never exposed in API responses
+     * (masked to a preview).
+     */
+    @Column(name = "assistant_gateway_api_key", length = 255)
+    private String assistantGatewayApiKey;
 }

@@ -50,6 +50,8 @@ services:
       # empty the assistant module stays disabled and returns 503.
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LLM_GATEWAY_API_KEY: ${LLM_GATEWAY_API_KEY:-}
+      # Tight per-user daily question cap for the public demo (protects LLM cost).
+      ASSISTANT_DAILY_CAP: ${ASSISTANT_DAILY_CAP:-15}
       # No SMTP configured in the demo — keep the mail indicator out of /actuator/health
       MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
       JAVA_TOOL_OPTIONS: "-Xmx512m -Xms256m"

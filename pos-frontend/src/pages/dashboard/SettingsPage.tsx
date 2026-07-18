@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/authStore'
 import { getStore, updateStore } from '../../services/storeService'
+import AssistantSettingsCard from '../../components/assistant/AssistantSettingsCard'
 
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user)
@@ -171,6 +172,8 @@ export default function SettingsPage() {
           </form>
         )}
       </div>
+
+      <AssistantSettingsCard />
     </div>
   )
 }

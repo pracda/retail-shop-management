@@ -10,11 +10,10 @@ const QUICK = [
 
 function extractError(e: unknown): string {
   const err = e as { response?: { status?: number; data?: { error?: { message?: string } } } }
-  if (err?.response?.status === 503) return 'The AI assistant is not enabled yet.'
-  if (err?.response?.status === 429) {
-    return err?.response?.data?.error?.message ?? "You've reached today's assistant limit."
-  }
-  return err?.response?.data?.error?.message ?? 'Something went wrong. Try again.'
+  return err?.response?.data?.error?.message
+    ?? (err?.response?.status === 503
+      ? 'The AI assistant is not enabled yet.'
+      : 'Something went wrong. Try again.')
 }
 
 export default function PosAssistantModal({ onClose }: { onClose: () => void }) {

@@ -34,3 +34,24 @@ export async function askCashier(payload: ChatPayload): Promise<AssistantChatRes
   const { data } = await api.post('/assistant/pos-chat', payload)
   return data.data
 }
+
+// ── Per-store configuration (admin) ──────────────────────────────────────────
+
+export interface AssistantConfig {
+  gatewayConfigured: boolean   // server has a gateway URL
+  storeKeyConfigured: boolean  // this store has its own key
+  usingServerDefault: boolean  // falling back to the server default key
+  keyPreview: string | null    // masked store key, e.g. "gw_live_v2…_psk"
+  source: 'store' | 'default' | 'none'
+}
+
+export async function getAssistantConfig(storeId: number): Promise<AssistantConfig> {
+  const { data } = await api.get('/assistant/config', { params: { storeId } })
+  return data.data
+}
+
+/** Set (non-empty) or clear (empty string) this store's gateway API key. */
+export async function updateAssistantKey(storeId: number, apiKey: string): Promise<AssistantConfig> {
+  const { data } = await api.put('/assistant/config', { apiKey }, { params: { storeId } })
+  return data.data
+}
