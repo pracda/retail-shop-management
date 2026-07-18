@@ -65,6 +65,13 @@ backend API, with multi-store isolation designed in from day one.
 - Online order intake from the ecommerce storefront (confirm → fulfill workflow)
 - User management with 4 role levels, immutable audit log of every critical action
 
+**AI Assistant** (admin + cashier)
+- Role-scoped chat that answers **only from your own store's data** — sales, margins,
+  inventory, product lookups — grounded in a live store-scoped snapshot (no hallucinated numbers)
+- Admin panel for analytical questions; a fast one-line cashier lookup on the POS
+- All LLM calls routed through a **Secure LLM API Gateway** (API-key auth, rate limiting,
+  prompt-injection scanning, token/audit logging); no provider SDK in this codebase
+
 **Architecture & Security**
 - Modular monolith: 20+ cleanly separated domain modules ready to split if ever needed
 - JWT access/refresh token rotation; PIN-based auth for cashier terminals

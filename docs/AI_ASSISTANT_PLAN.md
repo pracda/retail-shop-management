@@ -1,6 +1,10 @@
 # AI Assistant Feature Plan — Store Chatbot (Admin + Cashier)
 
-**Status:** ✅ Built & verified end-to-end (admin + cashier) against the live AWS gateway (2026-07-17)
+**Status:** ✅ **Deployed live** on AWS (2026-07-17) — admin + cashier assistants verified on
+the production demo through CloudFront (https://d2qttg93iautmd.cloudfront.net). Backend jar +
+prod compose shipped to the EC2 host; `LLM_GATEWAY_URL` / `LLM_GATEWAY_API_KEY` live in the
+server `/opt/pos/.env` only (never committed). Frontend built + synced to S3, CloudFront
+invalidated.
 **Updated:** 2026-07-17 — grounded in the actual codebase; the LLM gateway is now
 **live in AWS**, so deployment is a wiring exercise, not a build. Admin answers ship
 **text-first** (inline dashboards are a later phase).
